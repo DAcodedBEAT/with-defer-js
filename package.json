@@ -5,13 +5,14 @@
 	"type": "module",
 	"main": "index.js",
 	"scripts": {
-		"test": "vitest"
+		"test": "vitest",
+		"lint": "biome check ."
 	},
 	"author": "Arun Philip <dacodedbeat@gmail.com>",
 	"license": "MPL-2.0",
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.3",
-		"typescript": "^5.6.2",
-		"vitest": "^2.1.2"
+		"typescript": "^5.6.3",
+		"vitest": "^2.1.3"
 	}
 }
