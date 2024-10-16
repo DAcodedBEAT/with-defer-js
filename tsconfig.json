@@ -1,0 +1,10 @@
+{
+	"compilerOptions": {
+		"target": "ESNext", // JavaScript output version
+		"checkJs": true, // Enable type checking for JavaScript files
+		"allowJs": true, // Allow JavaScript files in the project
+		"noEmit": true // Prevent emitting output files
+	},
+	"include": ["src/*.js"], // Include all JavaScript files
+	"exclude": ["node_modules"] // Exclude node_modules
+}
