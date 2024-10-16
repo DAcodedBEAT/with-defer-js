@@ -104,3 +104,9 @@ Set options when you wrap your function, as well as on each deferred callback:
 const { cancel } = defer(() => console.log('This won’t run if canceled.'));
 cancel();
 ```
+
+## Contributing
+If you’d like to contribute to `with-defer.js`, we welcome your input! Please read our [Contributing Guidelines](https://github.com/DAcodedBEAT/with-defer-js/blob/main/CONTRIBUTING.md) to get started.
+
+## License
+`with-defer.js` is licensed under the Mozilla Public License 2.0. See the [`LICENSE`](https://github.com/DAcodedBEAT/with-defer-js/blob/main/LICENSE) file for more details.
