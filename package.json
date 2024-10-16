@@ -1,0 +1,17 @@
+{
+	"name": "with-defer-js",
+	"version": "0.0.1",
+	"description": "A simple and lightweight JavaScript library for scheduling deferred function callbacks to execute after a function, like Golang.",
+	"type": "module",
+	"main": "index.js",
+	"scripts": {
+		"test": "vitest"
+	},
+	"author": "Arun Philip <dacodedbeat@gmail.com>",
+	"license": "MPL-2.0",
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.3",
+		"typescript": "^5.6.2",
+		"vitest": "^2.1.2"
+	}
+}
