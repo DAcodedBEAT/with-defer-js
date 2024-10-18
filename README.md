@@ -1,5 +1,9 @@
 # `with-defer.js`
 
+[![npm version](https://img.shields.io/npm/v/@dacodedbeat/with-defer-js.svg)](https://www.npmjs.com/package/@dacodedbeat/with-defer-js)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
+[![Formatted with Biome](https://img.shields.io/badge/Formatted_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev/)
+
 **`with-defer.js`** is a simple and lightweight JavaScript library that allows you to schedule function callbacks after the execution of a function, just like Golang’s `defer`. Perfect for cleanup tasks, error handling, and more for both asynchronous and synchronous operations.
 
 ## Why `with-defer.js`?
