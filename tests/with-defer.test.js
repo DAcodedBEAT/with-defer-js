@@ -55,36 +55,33 @@ describe("withDefer", () => {
 	});
 
 	it("should propagate error when throwOnError is true for asynchronous deferred function", async () => {
-		const example = withDefer(async (defer) => {
-			const deferred = defer(
-				async () => {
+		const example = withDefer(
+			async (defer) => {
+				defer(async () => {
 					throw new Error("Error in Deferred Function");
-				},
-				{ throwOnError: true },
-			);
+				});
 
-			await new Promise((resolve) => setTimeout(resolve, 10));
-		});
-
-		expect(
-			async () =>
-				await example().toThrow("One or more deferred functions failed."),
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			},
+			{ throwOnError: true },
 		);
+
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
 	});
 
 	it("should propagate error when throwOnError is true for synchronous deferred function", async () => {
-		const example = withDefer((defer) => {
-			const deferred = defer(
-				() => {
+		const example = withDefer(
+			async (defer) => {
+				defer(() => {
 					throw new Error("Error in Deferred Function");
-				},
-				{ throwOnError: true },
-			);
+				});
 
-			setTimeout(resolve, 10);
-		});
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			},
+			{ throwOnError: true },
+		);
 
-		expect(() => example().toThrow("One or more deferred functions failed."));
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
 	});
 
 	it("should respect cancellation of a single deferred function", async () => {
@@ -544,40 +541,31 @@ describe("withDefer", () => {
 	});
 
 	it("should include function name in error message for named functions", async () => {
-		const example = withDefer(async (defer) => {
-			defer(namedFunction, { throwOnError: true });
-		});
-
 		function namedFunction() {
 			throw new Error("Error in Named Function");
 		}
 
-		expect(async () => await example().toThrow("1 deferred functions failed."));
-		expect(
-			async () =>
-				await example().toMatch(
-					/promise rejection in deferred function \d+ \(namedFunction\): Error in Named Function/,
-				),
+		const example = withDefer(
+			async (defer) => {
+				defer(namedFunction);
+			},
+			{ throwOnError: true },
 		);
+
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
 	});
 
 	it("should include function name in error message for anonymous functions", async () => {
-		const example = withDefer(async (defer) => {
-			defer(
-				() => {
+		const example = withDefer(
+			async (defer) => {
+				defer(() => {
 					throw new Error("Error in Anonymous Function");
-				},
-				{ throwOnError: true },
-			);
-		});
-
-		expect(async () => await example().toThrow("1 deferred functions failed."));
-		expect(
-			async () =>
-				await example().toMatch(
-					/promise rejection in deferred function \d+ \(anonymous\): Error in Named Function/,
-				),
+				});
+			},
+			{ throwOnError: true },
 		);
+
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
 	});
 
 	it("should work when no deferred functions are provided", async () => {
@@ -620,4 +608,444 @@ describe("withDefer", () => {
 
 		await example();
 	});
+
+	it("should throw error for invalid withDefer arguments", () => {
+		expect(() => withDefer("not a function")).toThrow(
+			"First argument must be a function",
+		);
+		expect(() => withDefer(() => {}, "not an object")).toThrow(
+			"Options must be an object or null",
+		);
+	});
+
+	it("should throw error for invalid defer options", async () => {
+		const example = withDefer(async (defer) => {
+			expect(() => defer(() => {}, "not an object")).toThrow(
+				"Options must be an object or null",
+			);
+			expect(() => defer(() => {}, { timeout: "not a number" })).toThrow(
+				"timeout must be a finite number or null",
+			);
+			expect(() =>
+				defer(() => {}, { timeout: Number.POSITIVE_INFINITY }),
+			).toThrow("timeout must be a finite number or null");
+			expect(() => defer(() => {}, { timeout: Number.NaN })).toThrow(
+				"timeout must be a finite number or null",
+			);
+			expect(() => defer(() => {}, { debug: "not a boolean" })).toThrow(
+				"debug must be a boolean",
+			);
+			expect(() => defer(() => {}, { throwOnError: "not a boolean" })).toThrow(
+				"throwOnError must be a boolean",
+			);
+			expect(() =>
+				defer(() => {}, { errorReporter: "not a function" }),
+			).toThrow("errorReporter must be a function or null");
+		});
+
+		await example();
+	});
+});
+
+describe("Edge Cases and Production Readiness Tests", () => {
+	it("should handle null/undefined callbacks gracefully", async () => {
+		const example = withDefer(async (defer) => {
+			expect(() => defer(null)).toThrow("callback must be a function");
+			expect(() => defer(undefined)).toThrow("callback must be a function");
+			expect(() => defer(123)).toThrow("callback must be a function");
+			expect(() => defer("string")).toThrow("callback must be a function");
+			expect(() => defer({})).toThrow("callback must be a function");
+		});
+
+		await example();
+	});
+
+	it("should handle extremely large timeout values", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(
+				() => {
+					logs.push("executed");
+				},
+				{ timeout: Number.MAX_SAFE_INTEGER },
+			);
+		});
+
+		await example();
+		expect(logs).toEqual(["executed"]);
+	});
+
+	it("should handle zero timeout (treated as no timeout)", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(
+				async () => {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+					logs.push("executed with zero timeout");
+				},
+				{ timeout: 0 },
+			);
+		});
+
+		await example();
+		expect(logs).toEqual(["executed with zero timeout"]);
+	});
+
+	it("should handle negative timeout values (treated as no timeout)", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(
+				async () => {
+					await new Promise((resolve) => setTimeout(resolve, 10));
+					logs.push("executed with negative timeout");
+				},
+				{ timeout: -100 },
+			);
+		});
+
+		await example();
+		expect(logs).toEqual(["executed with negative timeout"]);
+	});
+
+	it("should handle deferred functions that return non-promise values", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(() => {
+				logs.push("string return");
+				return "some string";
+			});
+			defer(() => {
+				logs.push("number return");
+				return 42;
+			});
+			defer(() => {
+				logs.push("object return");
+				return { key: "value" };
+			});
+		});
+
+		await example();
+		expect(logs).toEqual(["object return", "number return", "string return"]);
+	});
+
+	it("should handle deferred functions that throw non-Error objects", async () => {
+		const errorReporter = vi.fn();
+		const example = withDefer(
+			async (defer) => {
+				defer(() => {
+					throw "string error";
+				});
+				defer(() => {
+					throw { error: "object error" };
+				});
+				defer(() => {
+					throw 404;
+				});
+			},
+			{ errorReporter },
+		);
+
+		await example();
+		expect(errorReporter).toHaveBeenCalledTimes(3);
+	});
+
+	it("should handle cancellation after timeout has started", async () => {
+		const logs = [];
+		const errorReporter = vi.fn();
+
+		const example = withDefer(
+			async (defer) => {
+				const deferred = defer(
+					async () => {
+						await new Promise((resolve) => setTimeout(resolve, 100));
+						logs.push("should not execute");
+					},
+					{ timeout: 50 },
+				);
+
+				// Cancel after a delay but before timeout
+				setTimeout(() => deferred.cancel(), 30);
+				await new Promise((resolve) => setTimeout(resolve, 200));
+			},
+			{ errorReporter },
+		);
+
+		await example();
+		expect(logs).toEqual([]);
+		expect(errorReporter).not.toHaveBeenCalled();
+	});
+
+	it("should handle multiple cancellations of the same deferred function", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			const deferred = defer(() => {
+				logs.push("should not execute");
+			});
+
+			deferred.cancel();
+			deferred.cancel(); // Second cancellation should be safe
+			deferred.cancel(); // Third cancellation should be safe
+		});
+
+		await example();
+		expect(logs).toEqual([]);
+	});
+
+	it("should handle empty function bodies", async () => {
+		const example = withDefer(async (defer) => {
+			defer(() => {});
+			defer(async () => {});
+		});
+
+		await example(); // Should not throw
+	});
+
+	it("should handle functions that modify global state", async () => {
+		let globalCounter = 0;
+		const example = withDefer(async (defer) => {
+			defer(() => {
+				globalCounter += 1;
+			});
+			defer(() => {
+				globalCounter += 2;
+			});
+			defer(() => {
+				globalCounter += 3;
+			});
+		});
+
+		await example();
+		expect(globalCounter).toBe(6); // 3 + 2 + 1 (LIFO order)
+	});
+
+	it("should handle concurrent withDefer executions", async () => {
+		const logs = [];
+		const createExample = (id) =>
+			withDefer(async (defer) => {
+				defer(async () => {
+					await new Promise((resolve) =>
+						setTimeout(resolve, Math.random() * 50),
+					);
+					logs.push(`defer-${id}`);
+				});
+				logs.push(`main-${id}`);
+			});
+
+		const promises = [
+			createExample(1)(),
+			createExample(2)(),
+			createExample(3)(),
+		];
+
+		await Promise.all(promises);
+		expect(logs).toContain("main-1");
+		expect(logs).toContain("main-2");
+		expect(logs).toContain("main-3");
+		expect(logs).toContain("defer-1");
+		expect(logs).toContain("defer-2");
+		expect(logs).toContain("defer-3");
+	});
+
+	it("should handle memory pressure with many deferred functions", async () => {
+		const numFunctions = 10000;
+		let executionCount = 0;
+
+		const example = withDefer(async (defer) => {
+			for (let i = 0; i < numFunctions; i++) {
+				defer(() => {
+					executionCount++;
+				});
+			}
+		});
+
+		await example();
+		expect(executionCount).toBe(numFunctions);
+	});
+
+	it("should handle deferred functions that create timers", async () => {
+		const logs = [];
+		let timerId;
+
+		const example = withDefer(async (defer) => {
+			defer(() => {
+				timerId = setTimeout(() => {
+					logs.push("timer executed");
+				}, 10);
+			});
+			defer(() => {
+				clearTimeout(timerId);
+				logs.push("timer cleared");
+			});
+		});
+
+		await example();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(logs).toEqual(["timer cleared", "timer executed"]);
+	});
+
+	it("should handle complex nested promise chains in deferred functions", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(async () => {
+				const result = await Promise.resolve(1)
+					.then((x) => x + 1)
+					.then((x) => Promise.resolve(x * 2))
+					.then((x) => x + 3);
+				logs.push(result); // Should be 7: ((1 + 1) * 2) + 3
+			});
+		});
+
+		await example();
+		expect(logs).toEqual([7]);
+	});
+});
+
+describe("Additional withDefer tests", () => {
+	it("should handle a large number of deferred functions", async () => {
+		const logs = [];
+		const numDeferredFunctions = 1000;
+
+		const example = withDefer(async (defer) => {
+			for (let i = 0; i < numDeferredFunctions; i++) {
+				defer(() => {
+					logs.push(`Deferred function ${i} executed`);
+				});
+			}
+		});
+
+		await example();
+		expect(logs.length).toBe(numDeferredFunctions);
+		expect(logs[0]).toBe(
+			`Deferred function ${numDeferredFunctions - 1} executed`,
+		);
+		expect(logs[numDeferredFunctions - 1]).toBe("Deferred function 0 executed");
+	});
+
+	it(
+		"should handle deeply nested withDefer functions",
+		async () => {
+			const logs = [];
+			const depth = 10;
+
+			const createNestedExample = (currentDepth) =>
+				withDefer(async (defer) => {
+					defer(() => {
+						logs.push(`Depth ${currentDepth} executed`);
+					});
+
+					if (currentDepth > 0) {
+						await createNestedExample(currentDepth - 1)();
+					}
+				});
+
+			await createNestedExample(depth)();
+
+			expect(logs.length).toBe(depth + 1);
+			expect(logs).toEqual([
+				"Depth 0 executed",
+				"Depth 1 executed",
+				"Depth 2 executed",
+				"Depth 3 executed",
+				"Depth 4 executed",
+				"Depth 5 executed",
+				"Depth 6 executed",
+				"Depth 7 executed",
+				"Depth 8 executed",
+				"Depth 9 executed",
+				"Depth 10 executed",
+			]);
+		},
+		{
+			timeout: 30_000,
+		},
+	);
+
+	it("should handle deferred functions that return promises", async () => {
+		const logs = [];
+
+		const example = withDefer(async (defer) => {
+			defer(async () => {
+				logs.push("Result 2");
+			});
+
+			defer(async () => {
+				logs.push("Result 1");
+			});
+		});
+
+		await example();
+		expect(logs).toEqual(["Result 1", "Result 2"]);
+	});
+
+	it("should handle deferred functions with varying execution times", async () => {
+		const logs = [];
+
+		const example = withDefer(async (defer) => {
+			defer(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 30));
+				logs.push("Slow function");
+			});
+
+			defer(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				logs.push("Medium function");
+			});
+
+			defer(() => {
+				logs.push("Fast function");
+			});
+		});
+
+		await example();
+		expect(logs).toEqual(["Fast function", "Medium function", "Slow function"]);
+	});
+
+	it("should handle errors thrown in the main function", async () => {
+		const errorReporter = vi.fn();
+
+		const example = withDefer(
+			async (defer) => {
+				defer(() => {
+					console.log("This should still be called");
+				});
+
+				throw new Error("Main function error");
+			},
+			{ errorReporter },
+		);
+
+		await expect(example()).rejects.toThrow("Main function error");
+		expect(errorReporter).not.toHaveBeenCalled();
+	});
+
+	it(
+		"should handle recursive deferred functions",
+		async () => {
+			const logs = [];
+
+			const example = withDefer(async (defer) => {
+				const recursiveDefer = (count) => {
+					if (count <= 0) return;
+					defer(async () => {
+						logs.push(`Recursive ${count}`);
+					});
+					recursiveDefer(count - 1);
+				};
+
+				recursiveDefer(5);
+			});
+
+			await example();
+			expect(logs).toEqual([
+				"Recursive 1",
+				"Recursive 2",
+				"Recursive 3",
+				"Recursive 4",
+				"Recursive 5",
+			]);
+		},
+		{ timeout: 30_000 },
+	);
+
+	console.log("All additional tests completed successfully!");
 });

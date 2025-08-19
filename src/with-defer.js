@@ -1,32 +1,51 @@
 /**
- * @typedef {Object} deferOptions
- * @property {number|null} [timeout=null] - timeout for deferred functions
- * @property {boolean} [debug=false] - enable debug logging
- * @property {boolean} [throwOnError=false] - throw error if any deferred function fails
- * @property {function|null} [errorReporter=null] - function to report errors
+ * @typedef {Object} DeferOptions
+ * @property {number|null} [timeout=null] - Timeout for deferred functions
+ * @property {boolean} [debug=false] - Enable debug logging
+ * @property {boolean} [throwOnError=false] - Throw error if any deferred function fails
+ * @property {function|null} [errorReporter=null] - Function to report errors
  */
 
 /**
- * @typedef {Object} deferred
- * @property {Function} callback - the deferred callback function
- * @property {number|null} [timeout=null] - timeout for deferred functions
- * @property {string} functionName - the name of the function
- * @property {boolean} isCancelled - whether the deferred function has been cancelled
- * @property {Function} cancel - function to cancel the deferred function
+ * @typedef {Object} ErrorContext
+ * @property {Error} err - The error object
+ * @property {number} index - The index of the deferred function
+ * @property {string} message - The error message
  */
 
 /**
- * a wrapper function that lets you execute functions later with error handling
- * @param {Function} fn - the main function to execute with deferred functions
- * @param {deferOptions} [options={}] - global options for deferred functions
- * @returns {Function} - a function that, when called, will run the provided function with deferred functions
+ * @typedef {Object} Deferred
+ * @property {function(): Promise<any>} callback - The deferred callback function
+ * @property {number|null} timeout - Timeout for the deferred function
+ * @property {string} functionName - The name of the function
+ * @property {boolean} isCancelled - Whether the deferred function has been cancelled
+ * @property {function(any): void} resolve - Function to resolve the deferred promise
+ */
+
+/**
+ * @typedef {Object} DeferContext
+ * @property {function(function(): Promise<any>, DeferOptions=): {cancel: function(): void, promise: Promise<any>}} defer - Function to defer execution
+ * @property {function(function(): Promise<any>): Promise<void>} run - Function to run the main function and deferred functions
+ */
+
+/**
+ * Creates a wrapper function that allows for deferred execution with error handling
+ * @param {function(DeferContext['defer'], ...any[]): Promise<any>} fn - The main function to execute
+ * @param {DeferOptions} [options={}] - Global options for deferred functions
+ * @returns {function(...any[]): Promise<void>} - A function that runs the provided function with deferred execution
  */
 function withDefer(fn, options = {}) {
+	if (typeof fn !== "function") {
+		throw new TypeError("First argument must be a function");
+	}
+
+	if (options !== null && typeof options !== "object") {
+		throw new TypeError("Options must be an object or null");
+	}
 	/**
-	 * creates a deferral context with the provided global options
-	 * @param {deferOptions} [globalOptions={}] - global options for the deferral context
-	 * @template T
-	 * @returns {{defer: function(Function, deferOptions): {cancel: Function}, run: function(Function): Promise<void>}} - an object with defer and run methods
+	 * Creates a deferral context with the provided global options
+	 * @param {DeferOptions} [globalOptions={}] - Global options for the deferral context
+	 * @returns {DeferContext} - An object with defer and run methods
 	 */
 	function createDefer(globalOptions = {}) {
 		const {
@@ -36,38 +55,86 @@ function withDefer(fn, options = {}) {
 			errorReporter = null,
 		} = globalOptions;
 
-		/** @type {deferred[]} */
+		/** @type {Deferred[]} */
 		const deferQueue = [];
 
 		/**
-		 * adds a deferred function to the queue
-		 * @param {Function} callback - the deferred function to be executed later
-		 * @param {deferOptions} [localOptions={}] - local options for the deferred function
-		 * @returns {{cancel: Function}} - an object with a cancel method for the deferred function
+		 * Adds a deferred function to the queue
+		 * @param {function(): Promise<any>} callback - The deferred function to be executed later
+		 * @param {DeferOptions} [localOptions={}] - Local options for the deferred function
+		 * @returns {{cancel: function(): void, promise: Promise<any>}} - An object with a cancel method and a promise for the deferred function
 		 */
 		function defer(callback, localOptions = {}) {
 			if (typeof callback !== "function") {
-				throw new Error("callback must be a function");
+				throw new TypeError("callback must be a function");
 			}
+
+			if (localOptions !== null && typeof localOptions !== "object") {
+				throw new TypeError("Options must be an object or null");
+			}
+
+			const mergedOptions = { ...globalOptions, ...localOptions };
+
+			// Validate timeout option
+			if (
+				mergedOptions.timeout !== null &&
+				mergedOptions.timeout !== undefined &&
+				(typeof mergedOptions.timeout !== "number" ||
+					!Number.isFinite(mergedOptions.timeout))
+			) {
+				throw new TypeError("timeout must be a finite number or null");
+			}
+
+			// Validate boolean options
+			if (
+				typeof mergedOptions.debug !== "undefined" &&
+				typeof mergedOptions.debug !== "boolean"
+			) {
+				throw new TypeError("debug must be a boolean");
+			}
+
+			if (
+				typeof mergedOptions.throwOnError !== "undefined" &&
+				typeof mergedOptions.throwOnError !== "boolean"
+			) {
+				throw new TypeError("throwOnError must be a boolean");
+			}
+
+			// Validate errorReporter option
+			if (
+				mergedOptions.errorReporter !== null &&
+				mergedOptions.errorReporter !== undefined &&
+				typeof mergedOptions.errorReporter !== "function"
+			) {
+				throw new TypeError("errorReporter must be a function or null");
+			}
+
+			let resolvePromise;
+			const promise = new Promise((resolve) => {
+				resolvePromise = resolve;
+			});
 
 			const deferred = {
 				callback,
-				...globalOptions,
-				...localOptions,
+				timeout: mergedOptions.timeout ?? null,
 				functionName: callback.name || "anonymous",
 				isCancelled: false,
-				cancel() {
-					deferred.isCancelled = true;
-				},
+				resolve: resolvePromise,
 			};
 
 			deferQueue.unshift(deferred);
-			return { cancel: deferred.cancel };
+			return {
+				cancel: () => {
+					deferred.isCancelled = true;
+				},
+				promise,
+			};
 		}
 
 		/**
-		 * runs the main function and the deferred functions in order
-		 * @param {Function} fn - the main function to execute
+		 * Runs the main function and the deferred functions
+		 * @param {function(): Promise<any>} fn - The main function to execute
+		 * @returns {Promise<void>}
 		 */
 		async function run(fn) {
 			try {
@@ -78,65 +145,76 @@ function withDefer(fn, options = {}) {
 		}
 
 		/**
-		 * executes all deferred functions in the queue
-		 * @template T
-		 * @returns {Promise<(string | T)[]>} - a promise that resolves when all deferred functions are executed
+		 * Executes all deferred functions in the queue
+		 * @returns {Promise<any[]>}
 		 */
 		async function executeDeferredFunctions() {
 			const results = await Promise.allSettled(
 				deferQueue.map((deferred, index) => handleDeferred(deferred, index)),
 			);
 
-			handleErrors(results);
-			return results.map((result) =>
-				result.status === "fulfilled" ? result.value : "promise was rejected",
+			const errors = handleErrors(
+				results.map((r) => (r.status === "fulfilled" ? r.value : r.reason)),
 			);
+			if (throwOnError && errors.length > 0) {
+				throw new AggregateError(
+					errors,
+					`${errors.length} deferred functions failed`,
+				);
+			}
+
+			return results;
 		}
 
 		/**
-		 * handles the execution of a single deferred function
-		 * @param {deferred} deferred - the deferred function object
-		 * @param {number} index - the index of the deferred function in the queue
-		 * @template T
-		 * @returns {Promise<any>} - a promise that resolves when the function is executed or cancelled
+		 * Handles the execution of a single deferred function
+		 * @param {Deferred} deferred - The deferred function object
+		 * @param {number} index - The index of the deferred function in the queue
+		 * @returns {Promise<any>}
 		 */
-		function handleDeferred({ callback, timeout, isCancelled }, index) {
-			return new Promise((resolve, reject) => {
-				let timer;
+		async function handleDeferred(
+			{ callback, timeout, functionName, isCancelled, resolve },
+			index,
+		) {
+			if (isCancelled) {
+				const result = "deferred function was cancelled";
+				resolve(result);
+				return result;
+			}
 
-				if (timeout) {
-					timer = setTimeout(() => {
-						const error = new Error("timeout exceeded");
-						reportError(error, index, "timed out");
-						reject(error);
-					}, timeout);
-				}
+			try {
+				// Only create timeout promise if timeout is a positive number
+				const timeoutPromise =
+					timeout && timeout > 0
+						? new Promise((_, reject) =>
+								setTimeout(
+									() => reject(new Error("timeout exceeded")),
+									timeout,
+								),
+							)
+						: new Promise(() => {}); // Never resolves
 
-				if (isCancelled) {
-					resolve("deferred function was cancelled");
-					return;
-				}
-
-				Promise.resolve(callback())
-					.then((result) => {
-						clearTimeout(timer);
-						resolve(isCancelled ? "deferred function was cancelled" : result);
-					})
-					.catch((err) => {
-						clearTimeout(timer);
-						if (!isCancelled) {
-							reportError(err, index, "failed to execute");
-							reject(err);
-						}
-					});
-			});
+				const result = await Promise.race([callback(), timeoutPromise]);
+				resolve(result);
+				return result;
+			} catch (err) {
+				reportError(
+					err,
+					index,
+					err.message === "timeout exceeded"
+						? "timed out"
+						: "failed to execute",
+				);
+				resolve(err);
+				return err;
+			}
 		}
 
 		/**
-		 * reports errors with a standard format
-		 * @param {Error} err - the error object
-		 * @param {number} index - the index of the deferred function
-		 * @param {string} action - the action that caused the error
+		 * Reports errors with a standard format
+		 * @param {Error} err - The error object
+		 * @param {number} index - The index of the deferred function
+		 * @param {string} action - The action that caused the error
 		 */
 		function reportError(err, index, action) {
 			const { functionName } = deferQueue[index];
@@ -150,26 +228,21 @@ function withDefer(fn, options = {}) {
 		}
 
 		/**
-		 * handles errors from all deferred functions
-		 * @template T
-		 * @param {PromiseSettledResult<(T)>[]} results - the results of deferred functions
+		 * Handles errors from all deferred functions
+		 * @param {any[]} results - The results of deferred functions
+		 * @returns {Error[]}
 		 */
 		function handleErrors(results) {
-			const errors = results
-				.filter((result) => result.status === "rejected")
-				.map((result, index) => {
+			return results
+				.filter((result) => result instanceof Error)
+				.map((err, index) => {
 					const { functionName } = deferQueue[index];
-					const err = result.reason;
-					const message = `promise rejection in deferred function ${index} (${functionName}): ${err.message}`;
+					const message = `promise rejection in deferred function ${index} (${functionName})`;
 					if (debug) {
-						console.error(message);
+						console.error(message, err);
 					}
-					return err;
+					return new Error(`${message}: ${err.message}`);
 				});
-
-			if (throwOnError && errors.length > 0) {
-				throw new Error(`${errors.length} deferred functions failed`);
-			}
 		}
 
 		return { defer, run };
