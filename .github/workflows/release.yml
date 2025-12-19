@@ -1,39 +1,37 @@
-name: Publish Package to npmjs
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*' # Triggers on version tags, e.g., v1.0.0
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Cache node_modules
-        uses: actions/cache@v4
         with:
-          path: node_modules # Use the same path as before
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }} # Same key as before
-          restore-keys: |
-            ${{ runner.os }}-node-
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts' # Use the latest LTS version of Node.js
+          node-version: 'lts/*'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
+      - name: Run prepack checks
+        run: npm run prepack
+
+      - name: Release
+        run: npx semantic-release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # Use NPM token for authentication
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
