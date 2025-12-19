@@ -1,6 +1,6 @@
 {
 	"name": "@dacodedbeat/with-defer-js",
-	"version": "0.0.3",
+	"version": "1.0.0",
 	"description": "A simple and lightweight JavaScript library for scheduling deferred function callbacks to execute after a function, like Golang.",
 	"type": "module",
 	"main": "src/with-defer.js",
