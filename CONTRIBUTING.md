@@ -19,14 +19,14 @@ We love pull requests! Here’s how to submit one:
 
 1. **Fork the Repo**: Click the "Fork" button at the top right.
 2. **Clone Your Fork**:
-    ```bash
-    git clone https://github.com/YOUR-USERNAME/with-defer-js.git
-    cd with-defer-js
-    ```
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/with-defer-js.git
+   cd with-defer-js
+   ```
 3. **Create a Branch**:
-    ```bash
-    git checkout -b feature/your-feature-name
-    ```
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
 4. **Make Your Changes**: Add your features or fixes!
 5. **Commit Your Changes**:
 
@@ -38,9 +38,11 @@ We love pull requests! Here’s how to submit one:
     ```
 
 6. **Push to Your Fork**:
-    ```bash
-    git push origin feature/your-feature-name
-    ```
+
+```bash
+git push origin feature/your-feature-name
+```
+
 7. **Open a Pull Request**: Go to the original repo, click on "Pull Requests," and then "New Pull Request." Choose your
    branch.
 
@@ -84,6 +86,7 @@ Before setting up package publishing, ensure your npm account is secure:
 This project uses **semantic-release** for fully automated versioning and publishing:
 
 **How it works:**
+
 1. Push commits to `main` using [Conventional Commits](https://www.conventionalcommits.org/)
    - `feat:` → Minor version bump
    - `fix:` → Patch version bump
@@ -98,6 +101,7 @@ This project uses **semantic-release** for fully automated versioning and publis
    - Commits changes back to `main`
 
 **Example workflow:**
+
 ```bash
 # Make changes and commit with conventional commit
 git commit -m "feat: add new feature"
@@ -112,6 +116,7 @@ git push origin main
 ```
 
 **Manual Verification:**
+
 - Check [npm](https://www.npmjs.com/package/@dacodedbeat/with-defer-js) for new version
 - Check [GitHub Releases](https://github.com/DAcodedBEAT/with-defer-js/releases) for release notes
 - Check [CHANGELOG.md](./CHANGELOG.md) for detailed changes
@@ -119,6 +124,7 @@ git push origin main
 ### Versioning
 
 We follow [Semantic Versioning](https://semver.org/):
+
 - **Major (X.0.0)**: Breaking changes
 - **Minor (0.X.0)**: New features (backwards compatible)
 - **Patch (0.0.X)**: Bug fixes and improvements (backwards compatible)
@@ -126,6 +132,7 @@ We follow [Semantic Versioning](https://semver.org/):
 ### Conventional Commits
 
 All commits should follow the [Conventional Commits specification](https://www.conventionalcommits.org/):
+
 - `feat:` for new features
 - `fix:` for bug fixes
 - `perf:` for performance improvements

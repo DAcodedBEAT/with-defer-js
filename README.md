@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@dacodedbeat/with-defer-js.svg)](https://www.npmjs.com/package/@dacodedbeat/with-defer-js)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
-[![Formatted with Biome](https://img.shields.io/badge/Formatted_with-Biome-60a5fa?style=flat&logo=biome)](https://biomejs.dev/)
+[![Formatted with oxfmt](https://img.shields.io/badge/Formatted_with-oxfmt-orange?style=flat)](https://oxc.rs/docs/guide/usage/formatter)
 
 **`with-defer.js`** is a simple and lightweight JavaScript library that allows you to schedule function callbacks after
 the execution of a function, just like Golang’s `defer`. Perfect for cleanup tasks, error handling, and more for both
@@ -36,12 +36,12 @@ func main() {
 #### `with-defer.js`:
 
 ```javascript
-import { withDefer } from '@dacodedbeat/with-defer-js';
+import { withDefer } from "@dacodedbeat/with-defer-js";
 
 const mainFunction = (defer) => {
-    defer(() => console.log("Cleanup 1"));
-    defer(() => console.log("Cleanup 2"));
-    // do stuff
+	defer(() => console.log("Cleanup 1"));
+	defer(() => console.log("Cleanup 2"));
+	// do stuff
 };
 
 withDefer(mainFunction)();
@@ -74,16 +74,19 @@ Same vibe, right?
 ## Install
 
 ### npm
+
 ```bash
 npm install @dacodedbeat/with-defer-js
 ```
 
 ### Deno
+
 ```bash
 import { withDefer } from 'npm:@dacodedbeat/with-defer-js';
 ```
 
 ### Bun
+
 ```bash
 bun add @dacodedbeat/with-defer-js
 ```
@@ -93,12 +96,12 @@ bun add @dacodedbeat/with-defer-js
 Wrap your function with `withDefer` and use `defer` to schedule tasks.
 
 ```javascript
-import { withDefer } from '@dacodedbeat/with-defer-js';
+import { withDefer } from "@dacodedbeat/with-defer-js";
 
 const mainFunction = async (defer) => {
-    defer(() => console.log('Deferred task!'), { timeout: 5000 });
+	defer(() => console.log("Deferred task!"), { timeout: 5000 });
 
-    console.log('Doing main stuff!');
+	console.log("Doing main stuff!");
 };
 
 withDefer(mainFunction)();
@@ -107,13 +110,13 @@ withDefer(mainFunction)();
 ### TypeScript Usage
 
 ```typescript
-import { withDefer, type DeferFunction } from '@dacodedbeat/with-defer-js';
+import { withDefer, type DeferFunction } from "@dacodedbeat/with-defer-js";
 
 const mainFunction = async (defer: DeferFunction) => {
-    defer(() => console.log('Cleanup complete!'));
-    
-    // Your main logic here
-    return 'Success!';
+	defer(() => console.log("Cleanup complete!"));
+
+	// Your main logic here
+	return "Success!";
 };
 
 await withDefer(mainFunction)();
@@ -128,7 +131,7 @@ await withDefer(mainFunction)();
 Set options when you wrap your function, as well as on each deferred callback:
 
 | Option          | Type       | Default | Description                                  |
-|-----------------|------------|---------|----------------------------------------------|
+| --------------- | ---------- | ------- | -------------------------------------------- |
 | `timeout`       | `number`   | `null`  | Max time (ms) for deferred functions.        |
 | `debug`         | `boolean`  | `false` | Debug mode.                                  |
 | `throwOnError`  | `boolean`  | `false` | Throw error if a deferred function fails.    |
@@ -155,8 +158,8 @@ Your main function's return value is captured and available when `withDefer()` r
 
 ```javascript
 const example = withDefer(async (defer) => {
-    defer(() => console.log('cleanup'));
-    return { userId: 123 };
+	defer(() => console.log("cleanup"));
+	return { userId: 123 };
 });
 
 const result = await example();
@@ -170,9 +173,9 @@ Deferreds execute in **LIFO (Last-In-First-Out)** order, matching Go's defer sem
 
 ```javascript
 const example = withDefer(async (defer) => {
-    defer(() => console.log('3. First registered'));
-    defer(() => console.log('2. Second registered'));
-    defer(() => console.log('1. Third registered'));
+	defer(() => console.log("3. First registered"));
+	defer(() => console.log("2. Second registered"));
+	defer(() => console.log("1. Third registered"));
 });
 
 await example();
@@ -194,12 +197,12 @@ Errors don't mutate original error objects; use `.cause` property to access the 
 
 ```javascript
 try {
-    await example();
+	await example();
 } catch (aggErr) {
-    if (aggErr instanceof AggregateError) {
-        const wrappedErr = aggErr.errors[0];
-        const originalErr = wrappedErr.cause;  // Original error preserved
-    }
+	if (aggErr instanceof AggregateError) {
+		const wrappedErr = aggErr.errors[0];
+		const originalErr = wrappedErr.cause; // Original error preserved
+	}
 }
 ```
 
@@ -220,17 +223,17 @@ If a deferred callback returns a promise that rejects **after** the deferred exe
 ```javascript
 // ❌ BAD: Unhandled promise rejection
 defer(() => {
-    setTimeout(() => Promise.reject(new Error('late error')), 100);
+	setTimeout(() => Promise.reject(new Error("late error")), 100);
 });
 
 // ✅ GOOD: Await all async operations
 defer(async () => {
-    await fetch('/cleanup');
+	await fetch("/cleanup");
 });
 
 // ✅ GOOD: Explicitly handle unhandled rejections
 defer(() => {
-    fetch('/cleanup').catch(err => console.error('failed:', err));
+	fetch("/cleanup").catch((err) => console.error("failed:", err));
 });
 ```
 
@@ -240,14 +243,14 @@ Multiple `withDefer()` calls are independent and don't interfere with each other
 
 ```javascript
 const [result1, result2] = await Promise.all([
-    withDefer(async (defer) => {
-        defer(() => db.close());
-        return 'db cleaned';
-    })(),
-    withDefer(async (defer) => {
-        defer(() => server.close());
-        return 'server cleaned';
-    })()
+	withDefer(async (defer) => {
+		defer(() => db.close());
+		return "db cleaned";
+	})(),
+	withDefer(async (defer) => {
+		defer(() => server.close());
+		return "server cleaned";
+	})(),
 ]);
 // Both execute in parallel, independently
 ```

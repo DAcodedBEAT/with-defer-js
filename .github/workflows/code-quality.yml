@@ -14,14 +14,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 'lts/*'
-          cache: 'npm'
+          node-version: "lts/*"
+          cache: "npm"
 
       - name: Install Dependencies
         run: npm ci
 
-      - name: Run Biome linting
-        run: npx biome ci .
+      - name: Run lint and format check
+        run: npm run check
 
       - name: Run TypeScript type check
         run: npm run typecheck
