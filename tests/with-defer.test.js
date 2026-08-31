@@ -1,6 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 import { withDefer } from "../src/with-defer";
 
+async function runManyDeferreds(numFunctions) {
+	let executionCount = 0;
+	const example = withDefer(async (defer) => {
+		for (let i = 0; i < numFunctions; i++) {
+			defer(() => {
+				executionCount++;
+			});
+		}
+	});
+	await example();
+	return executionCount;
+}
+
+async function getThrowingAggregateError() {
+	const example = withDefer(
+		async (defer) => {
+			defer(() => {
+				throw new Error("Original error");
+			});
+		},
+		{ throwOnError: true },
+	);
+	try {
+		await example();
+	} catch (err) {
+		return err;
+	}
+}
+
 describe("withDefer", () => {
 	it("should execute a single synchronous deferred function", async () => {
 		const logs = [];
@@ -54,35 +83,32 @@ describe("withDefer", () => {
 		expect(logs).toEqual([]);
 	});
 
-	it("should propagate error when throwOnError is true for asynchronous deferred function", async () => {
-		const example = withDefer(
-			async (defer) => {
-				defer(async () => {
-					throw new Error("Error in Deferred Function");
-				});
-
-				await new Promise((resolve) => setTimeout(resolve, 10));
+	it.each([
+		[
+			"asynchronous",
+			async () => {
+				throw new Error("Error in Deferred Function");
 			},
-			{ throwOnError: true },
-		);
-
-		await expect(example()).rejects.toThrow("1 deferred functions failed");
-	});
-
-	it("should propagate error when throwOnError is true for synchronous deferred function", async () => {
-		const example = withDefer(
-			async (defer) => {
-				defer(() => {
-					throw new Error("Error in Deferred Function");
-				});
-
-				await new Promise((resolve) => setTimeout(resolve, 10));
+		],
+		[
+			"synchronous",
+			() => {
+				throw new Error("Error in Deferred Function");
 			},
-			{ throwOnError: true },
-		);
-
-		await expect(example()).rejects.toThrow("1 deferred functions failed");
-	});
+		],
+	])(
+		"should propagate error when throwOnError is true for %s deferred function",
+		async (_, callback) => {
+			const example = withDefer(
+				async (defer) => {
+					defer(callback);
+					await new Promise((resolve) => setTimeout(resolve, 10));
+				},
+				{ throwOnError: true },
+			);
+			await expect(example()).rejects.toThrow("1 deferred functions failed");
+		},
+	);
 
 	it("should respect cancellation of a single deferred function", async () => {
 		const errorReporter = vi.fn();
@@ -164,10 +190,7 @@ describe("withDefer", () => {
 		});
 
 		await example();
-		expect(logs).toEqual([
-			"Async Cleanup 2 completed",
-			"Async Cleanup 1 completed",
-		]);
+		expect(logs).toEqual(["Async Cleanup 2 completed", "Async Cleanup 1 completed"]);
 	});
 
 	it("should handle mixed deferred functions (sync and async)", async () => {
@@ -186,10 +209,7 @@ describe("withDefer", () => {
 		});
 
 		await example();
-		expect(logs).toEqual([
-			"Async Cleanup 2 completed",
-			"Sync Cleanup 1 completed",
-		]);
+		expect(logs).toEqual(["Async Cleanup 2 completed", "Sync Cleanup 1 completed"]);
 	});
 
 	it("should handle errors in multiple deferred functions", async () => {
@@ -303,10 +323,7 @@ describe("withDefer", () => {
 
 		await outerExample();
 
-		expect(logs).toEqual([
-			"Second Cleanup completed",
-			"First Cleanup completed",
-		]);
+		expect(logs).toEqual(["Second Cleanup completed", "First Cleanup completed"]);
 		expect(errorReporter).not.toHaveBeenCalled(); // Ensure no errors occurred
 	});
 
@@ -341,10 +358,7 @@ describe("withDefer", () => {
 		await firstExample();
 		await secondExample();
 
-		expect(logs).toEqual([
-			"First Cleanup completed",
-			"Second Cleanup completed",
-		]);
+		expect(logs).toEqual(["First Cleanup completed", "Second Cleanup completed"]);
 		expect(errorReporter).not.toHaveBeenCalled(); // Ensure no errors occurred
 	});
 
@@ -533,10 +547,7 @@ describe("withDefer", () => {
 		await firstExample();
 		await secondExample();
 
-		expect(logs).toEqual([
-			"First Cleanup completed",
-			"Second Cleanup completed",
-		]);
+		expect(logs).toEqual(["First Cleanup completed", "Second Cleanup completed"]);
 		expect(errorReporter).not.toHaveBeenCalled();
 	});
 
@@ -601,46 +612,36 @@ describe("withDefer", () => {
 
 	it("should throw error for non-function callbacks", async () => {
 		const example = withDefer(async (defer) => {
-			expect(() => defer("not a function")).toThrow(
-				"callback must be a function",
-			);
+			expect(() => defer("not a function")).toThrow("callback must be a function");
 		});
 
 		await example();
 	});
 
 	it("should throw error for invalid withDefer arguments", () => {
-		expect(() => withDefer("not a function")).toThrow(
-			"First argument must be a function",
-		);
-		expect(() => withDefer(() => {}, "not an object")).toThrow(
-			"Options must be an object or null",
-		);
+		expect(() => withDefer("not a function")).toThrow("First argument must be a function");
+		expect(() => withDefer(() => {}, "not an object")).toThrow("Options must be an object or null");
 	});
 
 	it("should throw error for invalid defer options", async () => {
 		const example = withDefer(async (defer) => {
-			expect(() => defer(() => {}, "not an object")).toThrow(
-				"Options must be an object or null",
-			);
+			expect(() => defer(() => {}, "not an object")).toThrow("Options must be an object or null");
 			expect(() => defer(() => {}, { timeout: "not a number" })).toThrow(
 				"timeout must be a finite number or null",
 			);
-			expect(() =>
-				defer(() => {}, { timeout: Number.POSITIVE_INFINITY }),
-			).toThrow("timeout must be a finite number or null");
+			expect(() => defer(() => {}, { timeout: Number.POSITIVE_INFINITY })).toThrow(
+				"timeout must be a finite number or null",
+			);
 			expect(() => defer(() => {}, { timeout: Number.NaN })).toThrow(
 				"timeout must be a finite number or null",
 			);
-			expect(() => defer(() => {}, { debug: "not a boolean" })).toThrow(
-				"debug must be a boolean",
-			);
+			expect(() => defer(() => {}, { debug: "not a boolean" })).toThrow("debug must be a boolean");
 			expect(() => defer(() => {}, { throwOnError: "not a boolean" })).toThrow(
 				"throwOnError must be a boolean",
 			);
-			expect(() =>
-				defer(() => {}, { errorReporter: "not a function" }),
-			).toThrow("errorReporter must be a function or null");
+			expect(() => defer(() => {}, { errorReporter: "not a function" })).toThrow(
+				"errorReporter must be a function or null",
+			);
 		});
 
 		await example();
@@ -823,19 +824,13 @@ describe("Edge Cases and Production Readiness Tests", () => {
 		const createExample = (id) =>
 			withDefer(async (defer) => {
 				defer(async () => {
-					await new Promise((resolve) =>
-						setTimeout(resolve, Math.random() * 50),
-					);
+					await new Promise((resolve) => setTimeout(resolve, Math.random() * 50));
 					logs.push(`defer-${id}`);
 				});
 				logs.push(`main-${id}`);
 			});
 
-		const promises = [
-			createExample(1)(),
-			createExample(2)(),
-			createExample(3)(),
-		];
+		const promises = [createExample(1)(), createExample(2)(), createExample(3)()];
 
 		await Promise.all(promises);
 		expect(logs).toContain("main-1");
@@ -847,19 +842,7 @@ describe("Edge Cases and Production Readiness Tests", () => {
 	});
 
 	it("should handle memory pressure with many deferred functions", async () => {
-		const numFunctions = 10000;
-		let executionCount = 0;
-
-		const example = withDefer(async (defer) => {
-			for (let i = 0; i < numFunctions; i++) {
-				defer(() => {
-					executionCount++;
-				});
-			}
-		});
-
-		await example();
-		expect(executionCount).toBe(numFunctions);
+		expect(await runManyDeferreds(10000)).toBe(10000);
 	});
 
 	it("should handle deferred functions that create timers", async () => {
@@ -915,9 +898,7 @@ describe("Additional withDefer tests", () => {
 
 		await example();
 		expect(logs.length).toBe(numDeferredFunctions);
-		expect(logs[0]).toBe(
-			`Deferred function ${numDeferredFunctions - 1} executed`,
-		);
+		expect(logs[0]).toBe(`Deferred function ${numDeferredFunctions - 1} executed`);
 		expect(logs[numDeferredFunctions - 1]).toBe("Deferred function 0 executed");
 	});
 
@@ -1234,19 +1215,7 @@ describe("Performance and Stress Cases", () => {
 	});
 
 	it("should handle memory cleanup with large number of concurrent deferreds", async () => {
-		const numFunctions = 50000;
-		let executionCount = 0;
-
-		const example = withDefer(async (defer) => {
-			for (let i = 0; i < numFunctions; i++) {
-				defer(() => {
-					executionCount++;
-				});
-			}
-		});
-
-		await example();
-		expect(executionCount).toBe(numFunctions);
+		expect(await runManyDeferreds(50000)).toBe(50000);
 	}, 30000);
 
 	it("should handle extremely rapid deferred function execution", async () => {
@@ -1276,16 +1245,12 @@ describe("Performance and Stress Cases", () => {
 		const createExample = (id) =>
 			withDefer(async (defer) => {
 				defer(async () => {
-					await new Promise((resolve) =>
-						setTimeout(resolve, Math.random() * 10),
-					);
+					await new Promise((resolve) => setTimeout(resolve, Math.random() * 10));
 					logs.push(id);
 				});
 			});
 
-		const promises = Array.from({ length: concurrentCount }, (_, i) =>
-			createExample(i)(),
-		);
+		const promises = Array.from({ length: concurrentCount }, (_, i) => createExample(i)());
 
 		await Promise.all(promises);
 		expect(logs).toHaveLength(concurrentCount);
@@ -1382,10 +1347,7 @@ describe("Real-World Scenario Tests", () => {
 		});
 
 		await databaseOperation();
-		expect(logs).toEqual([
-			"database operation completed",
-			"database connection closed",
-		]);
+		expect(logs).toEqual(["database operation completed", "database connection closed"]);
 		expect(mockConnection.isConnected).toBe(false);
 	});
 
@@ -1454,10 +1416,7 @@ describe("Real-World Scenario Tests", () => {
 		});
 
 		await eventOperation();
-		expect(logs).toEqual([
-			"event operation completed",
-			"event listener removed",
-		]);
+		expect(logs).toEqual(["event operation completed", "event listener removed"]);
 		expect(mockEventTarget.listeners.get("test")).toEqual([]);
 	});
 
@@ -1606,9 +1565,7 @@ describe("Missing Critical Tests", () => {
 
 		expect(consoleSpy).toHaveBeenCalled();
 		const callsAsStrings = consoleSpy.mock.calls.map((call) => String(call[0]));
-		expect(
-			callsAsStrings.some((call) => call.includes("Error in errorReporter")),
-		).toBe(true);
+		expect(callsAsStrings.some((call) => call.includes("Error in errorReporter"))).toBe(true);
 
 		consoleSpy.mockRestore();
 	});
@@ -1638,43 +1595,16 @@ describe("Missing Critical Tests", () => {
 	});
 
 	it("should set error.cause property for wrapped errors", async () => {
-		const example = withDefer(
-			async (defer) => {
-				defer(() => {
-					throw new Error("Original error");
-				});
-			},
-			{ throwOnError: true },
-		);
-
-		try {
-			await example();
-		} catch (err) {
-			expect(err).toBeInstanceOf(AggregateError);
-			const originalErr = err.errors[0];
-
-			expect(originalErr.cause).toBeDefined();
-			expect(originalErr.cause.message).toBe("Original error");
-		}
+		const err = await getThrowingAggregateError();
+		expect(err).toBeInstanceOf(AggregateError);
+		const originalErr = err.errors[0];
+		expect(originalErr.cause).toBeDefined();
+		expect(originalErr.cause.message).toBe("Original error");
 	});
 
 	it("should preserve original stack trace in error.stack", async () => {
-		const example = withDefer(
-			async (defer) => {
-				defer(() => {
-					throw new Error("Original error");
-				});
-			},
-			{ throwOnError: true },
-		);
-
-		try {
-			await example();
-		} catch (err) {
-			const wrappedError = err.errors[0];
-
-			expect(wrappedError.stack).toContain("Caused by:");
-		}
+		const err = await getThrowingAggregateError();
+		expect(err.errors[0].stack).toContain("Caused by:");
 	});
 
 	it("should handle synchronous main function", async () => {

@@ -1,12 +1,12 @@
 /**
  * @typedef {Object} ErrorContext
- * @property {Error} err - The error object
+ * @property {unknown} err - The error object
  * @property {number} index - The index of the deferred function
  * @property {string} message - The error message
  */
 
 /**
- * @typedef {function(Error, ErrorContext): void} ErrorReporter
+ * @typedef {function(unknown, ErrorContext): void} ErrorReporter
  */
 
 /**
@@ -71,22 +71,33 @@ function validateBoolean(value, name) {
 }
 
 /**
+ * @param {unknown} err
+ * @returns {string}
+ */
+function getErrorMessage(err) {
+	return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * @typedef {{value: *, next: DequeNode|null}} DequeNode
+ */
+
+/**
  * Simple deque implementation for efficient prepend operations
  * Provides O(1) prepend and iteration, avoiding array.unshift() O(n) cost
  */
 class Deque {
 	constructor() {
+		/** @type {DequeNode|null} */
 		this.head = null;
-		this.tail = null;
 		this.length = 0;
 	}
 
+	/** @param {*} item */
 	prepend(item) {
+		/** @type {DequeNode} */
 		const node = { value: item, next: this.head };
 		this.head = node;
-		if (!this.tail) {
-			this.tail = node;
-		}
 		this.length++;
 	}
 
@@ -96,15 +107,6 @@ class Deque {
 			yield current.value;
 			current = current.next;
 		}
-	}
-
-	map(callback) {
-		const result = [];
-		let index = 0;
-		for (const item of this) {
-			result.push(callback(item, index++));
-		}
-		return result;
 	}
 }
 
@@ -135,34 +137,21 @@ function validateDeferOptions(options) {
 
 /**
  * Creates a formatted error message for deferred functions
- * @param {Deque|Deferred[]} deferQueue - The queue of deferred functions
+ * @param {Deque} deferQueue - The queue of deferred functions
  * @param {number} index - The index of the deferred function
  * @param {string} prefix - The message prefix
  * @param {string} [suffix] - Optional message suffix
  * @returns {string} - Formatted error message
  */
 function createErrorMessage(deferQueue, index, prefix, suffix = "") {
-	let deferred;
-	if (Array.isArray(deferQueue)) {
-		deferred = deferQueue[index];
-	} else {
-		let currentIndex = 0;
-		for (const item of deferQueue) {
-			if (currentIndex === index) {
-				deferred = item;
-				break;
-			}
-			currentIndex++;
-		}
-	}
-	const { functionName } = deferred || { functionName: "unknown" };
+	const { functionName } = Array.from(deferQueue)[index] || { functionName: "unknown" };
 	const suffixPart = suffix ? `: ${suffix}` : "";
 	return `${prefix} in deferred function ${index} (${functionName})${suffixPart}`;
 }
 
 /**
  * Reports and logs errors with a standard format
- * @param {Error} err - The error object
+ * @param {unknown} err - The error object
  * @param {number} index - The index of the deferred function
  * @param {string} action - The action that caused the error
  * @param {Deque} deferQueue - The queue of deferred functions
@@ -174,7 +163,7 @@ function reportError(err, index, action, deferQueue, errorReporter, debug) {
 		deferQueue,
 		index,
 		"error",
-		`${action}: ${err instanceof Error ? err.message : String(err)}`,
+		`${action}: ${getErrorMessage(err)}`,
 	);
 	if (debug) {
 		console.error(message, err);
@@ -184,12 +173,7 @@ function reportError(err, index, action, deferQueue, errorReporter, debug) {
 			errorReporter(err, { err, index, message });
 		} catch (reporterErr) {
 			if (debug) {
-				console.error(
-					"Error in errorReporter callback:",
-					reporterErr instanceof Error
-						? reporterErr.message
-						: String(reporterErr),
-				);
+				console.error("Error in errorReporter callback:", getErrorMessage(reporterErr));
 			}
 		}
 	}
@@ -215,15 +199,11 @@ async function handleDeferred(
 
 	let timeoutId;
 	try {
-		// Only create timeout promise if timeout is a positive number
 		const promises = [callback()];
-		if (timeout && timeout > 0) {
+		if (timeout != null && timeout > 0) {
 			promises.push(
 				new Promise((_, reject) => {
-					timeoutId = setTimeout(
-						() => reject(new Error("timeout exceeded")),
-						timeout,
-					);
+					timeoutId = setTimeout(() => reject(new Error("timeout exceeded")), timeout);
 				}),
 			);
 		}
@@ -270,7 +250,7 @@ function withDefer(fn, options = {}) {
 		 * @returns {DeferContext} - An object with defer and run methods
 		 */
 		function createDefer(globalOptions = {}) {
-			const { debug = false, throwOnError = false } = globalOptions;
+			const { throwOnError = false } = globalOptions;
 
 			/** @type {Deque} */
 			const deferQueue = new Deque();
@@ -278,7 +258,7 @@ function withDefer(fn, options = {}) {
 
 			/**
 			 * Adds a deferred function to the queue
-			 * @param {function(): Promise<unknown>} callback - The deferred function to be executed later
+			 * @param {CallbackFunction} callback - The deferred function to be executed later
 			 * @param {DeferOptions} [localOptions={}] - Local options for the deferred function
 			 * @returns {{cancel: function(): void, promise: Promise<unknown>}} - An object with a cancel method and a promise for the deferred function
 			 */
@@ -325,7 +305,7 @@ function withDefer(fn, options = {}) {
 
 			/**
 			 * Runs the main function and the deferred functions
-			 * @param {function(): Promise<unknown>} fn - The main function to execute
+			 * @param {function(): (unknown|Promise<unknown>)} fn - The main function to execute
 			 * @returns {Promise<unknown>} - The return value of the main function
 			 */
 			async function run(fn) {
@@ -340,27 +320,20 @@ function withDefer(fn, options = {}) {
 
 			/**
 			 * Executes all deferred functions sequentially in LIFO order
-			 * @returns {Promise<PromiseSettledResult<unknown>[]>}
+			 * @returns {Promise<unknown[]>}
 			 */
 			async function executeDeferredFunctions() {
 				isExecuting = true;
 				const results = [];
-				const deferredArray = Array.from(deferQueue);
 
-				for (let i = 0; i < deferredArray.length; i++) {
-					const result = await Promise.allSettled([
-						handleDeferred(deferredArray[i], i, deferQueue),
-					]);
-					results.push(result[0]);
+				let i = 0;
+				for (const deferred of deferQueue) {
+					results.push(await handleDeferred(deferred, i++, deferQueue));
 				}
 
 				const errors = handleErrors(
-					results.map((r, index) => ({
-						result: r.status === "fulfilled" ? r.value : r.reason,
-						index,
-					})),
+					results.map((result, index) => ({ result, index })),
 					deferQueue,
-					debug,
 				);
 
 				// Clean up callback references to allow garbage collection
@@ -371,10 +344,7 @@ function withDefer(fn, options = {}) {
 				}
 
 				if (throwOnError && errors.length > 0) {
-					throw new AggregateError(
-						errors,
-						`${errors.length} deferred functions failed`,
-					);
+					throw new AggregateError(errors, `${errors.length} deferred functions failed`);
 				}
 
 				return results;
@@ -384,21 +354,13 @@ function withDefer(fn, options = {}) {
 			 * Handles errors from all deferred functions
 			 * @param {{result: unknown, index: number}[]} resultWithIndex - Results with their indices
 			 * @param {Deque} deferQueue - The queue of deferred functions
-			 * @param {boolean} debug - Whether debug logging is enabled
 			 * @returns {Error[]}
 			 */
-			function handleErrors(resultWithIndex, deferQueue, debug) {
+			function handleErrors(resultWithIndex, deferQueue) {
 				return resultWithIndex
 					.filter(({ result }) => result instanceof Error)
 					.map(({ result: err, index }) => {
-						const message = createErrorMessage(
-							deferQueue,
-							index,
-							"promise rejection",
-						);
-						if (debug) {
-							console.error(message, err);
-						}
+						const message = createErrorMessage(deferQueue, index, "promise rejection");
 						if (err instanceof Error) {
 							const wrappedErr = new Error(`${message}: ${err.message}`);
 							wrappedErr.cause = err;

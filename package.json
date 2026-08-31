@@ -2,14 +2,19 @@
 	"name": "@dacodedbeat/with-defer-js",
 	"version": "1.0.0",
 	"description": "A simple and lightweight JavaScript library for scheduling deferred function callbacks to execute after a function, like Golang.",
-	"type": "module",
-	"main": "src/with-defer.js",
-	"exports": {
-		".": {
-			"import": "./src/with-defer.js",
-			"types": "./src/with-defer.d.ts"
-		}
-	},
+	"keywords": [
+		"async",
+		"cancellation",
+		"cleanup",
+		"defer",
+		"error-handling",
+		"golang",
+		"javascript",
+		"promise",
+		"timeout"
+	],
+	"license": "MPL-2.0",
+	"author": "Arun Philip <dacodedbeat@gmail.com>",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/DAcodedBEAT/with-defer-js.git"
@@ -21,38 +26,38 @@
 		"README.md",
 		"LICENSE"
 	],
+	"type": "module",
+	"main": "src/with-defer.js",
+	"exports": {
+		".": {
+			"import": "./src/with-defer.js",
+			"types": "./src/with-defer.d.ts"
+		}
+	},
 	"scripts": {
 		"test": "vitest",
 		"test:run": "vitest --run --reporter=verbose",
 		"test:coverage": "vitest --coverage",
-		"lint": "biome check .",
-		"lint:fix": "biome check . --write",
+		"lint": "oxlint .",
+		"lint:fix": "oxlint --fix .",
+		"fmt": "oxfmt --check .",
+		"fmt:fix": "oxfmt .",
+		"check": "npm run lint && npm run fmt",
+		"check:fix": "npm run lint:fix && npm run fmt:fix",
 		"typecheck": "tsc --noEmit",
 		"generate:types": "tsc",
-		"prepack": "npm run lint && npm run typecheck && npm run test:run && npm run generate:types"
-	},
-	"keywords": [
-		"defer",
-		"cleanup",
-		"javascript",
-		"async",
-		"promise",
-		"golang",
-		"error-handling",
-		"timeout",
-		"cancellation"
-	],
-	"author": "Arun Philip <dacodedbeat@gmail.com>",
-	"license": "MPL-2.0",
-	"engines": {
-		"node": ">=16.0.0"
+		"prepack": "npm run check && npm run typecheck && npm run test:run && npm run generate:types"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.3.10",
 		"@semantic-release/changelog": "^6.0.3",
 		"@semantic-release/git": "^10.0.1",
-		"semantic-release": "^25.0.2",
-		"typescript": "^5.9.3",
-		"vitest": "^4.0.16"
+		"oxfmt": "*",
+		"oxlint": "*",
+		"semantic-release": "^25.0.9",
+		"typescript": "^6.0.2",
+		"vitest": "^4.1.11"
+	},
+	"engines": {
+		"node": ">=16.0.0"
 	}
 }
