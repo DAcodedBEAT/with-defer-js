@@ -18,18 +18,29 @@
  */
 
 /**
- * @typedef {function(): (unknown|Promise<unknown>)} CallbackFunction
+ * @typedef {Object} RunContext
+ * @property {boolean} hasError - Whether the main function is currently pending with an error (false once recovered)
+ * @property {unknown} error - The main function's pending error, meaningful only when hasError is true
+ * @property {unknown} value - The main function's pending return value, meaningful only when hasError is false
+ * @property {function(unknown): void} recover - Suppresses the pending error (if any) and sets the final return value,
+ *   mirroring Go's `recover()` + named-return mutation. Reflects the current state right before each deferred runs, so
+ *   a later (earlier-registered) deferred sees whatever an earlier (later-registered) one already recovered/set.
+ */
+
+/**
+ * @typedef {function(RunContext=): (unknown|Promise<unknown>)} CallbackFunction
  */
 
 /**
  * @typedef {Object} Deferred
- * @property {CallbackFunction} callback - The deferred callback function
+ * @property {CallbackFunction|null} callback - The deferred callback function (nulled out after execution for GC)
  * @property {number|null} timeout - Timeout for the deferred function
  * @property {string} functionName - The name of the function
  * @property {boolean} isCancelled - Whether the deferred function has been cancelled
- * @property {function(unknown): void} resolve - Function to resolve the deferred promise
+ * @property {(function(unknown): void)|null} resolve - Function to resolve the deferred promise (nulled out after execution for GC)
  * @property {ErrorReporter|null} errorReporter - Per-deferred error reporter function
  * @property {boolean} debug - Whether debug logging is enabled for this deferred
+ * @property {boolean} throwOnError - Whether a failure of this deferred should be included in the thrown AggregateError
  */
 
 /**
@@ -39,13 +50,7 @@
  */
 
 /**
- * @typedef {function(CallbackFunction, DeferOptions=): DeferredResult} DeferFunction
- */
-
-/**
- * @typedef {Object} DeferContext
- * @property {DeferFunction} defer - Function to defer execution
- * @property {function(function(): (unknown|Promise<unknown>)): Promise<unknown>} run - Function to run the main function and deferred functions
+ * @typedef {(callback: CallbackFunction, localOptions?: DeferOptions) => DeferredResult} DeferFunction
  */
 
 /**
@@ -79,42 +84,47 @@ function getErrorMessage(err) {
 }
 
 /**
- * @typedef {{value: *, next: DequeNode|null}} DequeNode
+ * @type {ReadonlySet<string>}
  */
+const KNOWN_DEFER_OPTION_KEYS = new Set(["timeout", "debug", "throwOnError", "errorReporter"]);
 
 /**
- * Simple deque implementation for efficient prepend operations
- * Provides O(1) prepend and iteration, avoiding array.unshift() O(n) cost
+ * Rejects options objects containing keys outside the documented option set (e.g. typos)
+ * @param {unknown} options - Options to check
+ * @param {string} name - Name of the parameter for error messages
  */
-class Deque {
-	constructor() {
-		/** @type {DequeNode|null} */
-		this.head = null;
-		this.length = 0;
+function validateKnownKeys(options, name) {
+	if (options === null || options === undefined) {
+		return;
 	}
-
-	/** @param {*} item */
-	prepend(item) {
-		/** @type {DequeNode} */
-		const node = { value: item, next: this.head };
-		this.head = node;
-		this.length++;
-	}
-
-	*[Symbol.iterator]() {
-		let current = this.head;
-		while (current) {
-			yield current.value;
-			current = current.next;
+	for (const key of Object.keys(options)) {
+		if (!KNOWN_DEFER_OPTION_KEYS.has(key)) {
+			throw new TypeError(`Unknown ${name} property: "${key}"`);
 		}
 	}
 }
 
 /**
+ * Validates that an options argument is a well-shaped options object: an object or null,
+ * and containing only known keys. Doesn't validate individual option values - callers do
+ * that themselves via validateDeferOptions, once they have the (possibly merged) object
+ * whose values actually apply.
+ * @param {unknown} options - Options to check
+ * @param {string} name - Name of the parameter for error messages
+ */
+function validateOptionsShape(options, name) {
+	validateOptionsObject(options, name);
+	validateKnownKeys(options, name);
+}
+
+/**
  * Validates options object properties
- * @param {DeferOptions} options - Options to validate
+ * @param {DeferOptions|null|undefined} options - Options to validate
  */
 function validateDeferOptions(options) {
+	if (options === null || options === undefined) {
+		return;
+	}
 	if (
 		options.timeout !== null &&
 		options.timeout !== undefined &&
@@ -137,14 +147,13 @@ function validateDeferOptions(options) {
 
 /**
  * Creates a formatted error message for deferred functions
- * @param {Deque} deferQueue - The queue of deferred functions
+ * @param {string} functionName - The name of the deferred function
  * @param {number} index - The index of the deferred function
  * @param {string} prefix - The message prefix
  * @param {string} [suffix] - Optional message suffix
  * @returns {string} - Formatted error message
  */
-function createErrorMessage(deferQueue, index, prefix, suffix = "") {
-	const { functionName } = Array.from(deferQueue)[index] || { functionName: "unknown" };
+function createErrorMessage(functionName, index, prefix, suffix = "") {
 	const suffixPart = suffix ? `: ${suffix}` : "";
 	return `${prefix} in deferred function ${index} (${functionName})${suffixPart}`;
 }
@@ -154,13 +163,14 @@ function createErrorMessage(deferQueue, index, prefix, suffix = "") {
  * @param {unknown} err - The error object
  * @param {number} index - The index of the deferred function
  * @param {string} action - The action that caused the error
- * @param {Deque} deferQueue - The queue of deferred functions
+ * @param {string} functionName - The name of the deferred function
  * @param {ErrorReporter|null} errorReporter - Error reporter callback
  * @param {boolean} debug - Whether debug logging is enabled
+ * @returns {Promise<void>}
  */
-function reportError(err, index, action, deferQueue, errorReporter, debug) {
+async function reportError(err, index, action, functionName, errorReporter, debug) {
 	const message = createErrorMessage(
-		deferQueue,
+		functionName,
 		index,
 		"error",
 		`${action}: ${getErrorMessage(err)}`,
@@ -170,7 +180,7 @@ function reportError(err, index, action, deferQueue, errorReporter, debug) {
 	}
 	if (errorReporter) {
 		try {
-			errorReporter(err, { err, index, message });
+			await errorReporter(err, { err, index, message });
 		} catch (reporterErr) {
 			if (debug) {
 				console.error("Error in errorReporter callback:", getErrorMessage(reporterErr));
@@ -180,26 +190,69 @@ function reportError(err, index, action, deferQueue, errorReporter, debug) {
 }
 
 /**
+ * @typedef {{ok: true, value: unknown}|{ok: false, error: unknown}} DeferredOutcome
+ */
+
+/**
+ * @typedef {{hasError: boolean, error: unknown, value: unknown}} RunOutcome
+ */
+
+/**
+ * Builds the RunContext handed to a deferred callback, reflecting the current (possibly
+ * already-recovered-by-an-earlier-deferred) state of the main function's outcome.
+ * @param {RunOutcome} runOutcome - The shared, mutable outcome of the main function
+ * @param {{settled: boolean}} ticket - Flips to settled once this deferred's own
+ *   handleDeferred call has settled (via timeout, completion, or cancellation), so a
+ *   callback that keeps running detached after losing its timeout race can no longer
+ *   mutate runOutcome out from under later deferreds or the already-finished run().
+ * @returns {RunContext}
+ */
+function createRunContext(runOutcome, ticket) {
+	return {
+		hasError: runOutcome.hasError,
+		error: runOutcome.error,
+		value: runOutcome.value,
+		recover(newValue) {
+			if (ticket.settled) {
+				return;
+			}
+			runOutcome.hasError = false;
+			runOutcome.error = undefined;
+			runOutcome.value = newValue;
+		},
+	};
+}
+
+/**
  * Handles the execution of a single deferred function
  * @param {Deferred} deferred - The deferred function object
  * @param {number} index - The index of the deferred function in the queue
- * @param {Deque} deferQueue - The queue of deferred functions for error messaging
- * @returns {Promise<unknown>}
+ * @param {RunOutcome} runOutcome - The shared, mutable outcome of the main function
+ * @returns {Promise<DeferredOutcome>}
  */
 async function handleDeferred(
-	{ callback, timeout, isCancelled, resolve, errorReporter, debug },
+	{ callback, timeout, isCancelled, resolve, errorReporter, debug, functionName },
 	index,
-	deferQueue,
+	runOutcome,
 ) {
+	// callback/resolve are only ever null after this deferred has already run once (GC cleanup);
+	// handleDeferred is never invoked twice for the same deferred, so they're non-null here.
+	const invoke = /** @type {CallbackFunction} */ (callback);
+	const settle = /** @type {function(unknown): void} */ (resolve);
+
 	if (isCancelled) {
 		const result = "deferred function was cancelled";
-		resolve(result);
-		return result;
+		settle(result);
+		return { ok: true, value: result };
 	}
+
+	// See createRunContext: guards against a callback that keeps running (e.g. past a lost
+	// timeout race) from mutating runOutcome after this deferred has already settled.
+	const ticket = { settled: false };
 
 	let timeoutId;
 	try {
-		const promises = [callback()];
+		const promises = [invoke(createRunContext(runOutcome, ticket))];
 		if (timeout != null && timeout > 0) {
 			promises.push(
 				new Promise((_, reject) => {
@@ -209,13 +262,15 @@ async function handleDeferred(
 		}
 
 		const result = await Promise.race(promises);
+		ticket.settled = true;
 		// Clear timeout if it was created and callback completed first
 		if (timeoutId !== undefined) {
 			clearTimeout(timeoutId);
 		}
-		resolve(result);
-		return result;
+		settle(result);
+		return { ok: true, value: result };
 	} catch (err) {
+		ticket.settled = true;
 		// Ensure timeout is cleared even if callback throws
 		if (timeoutId !== undefined) {
 			clearTimeout(timeoutId);
@@ -224,36 +279,35 @@ async function handleDeferred(
 			err instanceof Error && err.message === "timeout exceeded"
 				? "timed out"
 				: "failed to execute";
-		reportError(err, index, action, deferQueue, errorReporter, debug);
-		resolve(err);
-		return err;
+		await reportError(err, index, action, functionName, errorReporter, debug);
+		settle(err);
+		return { ok: false, error: err };
 	}
 }
 
 /**
  * Creates a wrapper function that allows for deferred execution with error handling
- * @param {function(DeferFunction, ...unknown[]): (unknown|Promise<unknown>)} fn - The main function to execute
+ * @param {(defer: DeferFunction, ...args: unknown[]) => (unknown|Promise<unknown>)} fn - The main function to execute
  * @param {DeferOptions} [options={}] - Global options for deferred functions
- * @returns {function(...unknown[]): Promise<unknown>} - A function that runs the provided function with deferred execution and returns the main function's return value
+ * @returns {(...args: unknown[]) => Promise<unknown>} - A function that runs the provided function with deferred execution and returns the main function's return value
  */
 function withDefer(fn, options = {}) {
 	if (typeof fn !== "function") {
 		throw new TypeError("First argument must be a function");
 	}
 
-	validateOptionsObject(options, "Options");
+	validateOptionsShape(options, "Options");
+	validateDeferOptions(options);
 
 	return async (...args) => {
 		/**
 		 * Creates a deferral context with the provided global options
 		 * @param {DeferOptions} [globalOptions={}] - Global options for the deferral context
-		 * @returns {DeferContext} - An object with defer and run methods
+		 * @returns {{defer: DeferFunction, run: function(function(): (unknown|Promise<unknown>)): Promise<unknown>}}
 		 */
 		function createDefer(globalOptions = {}) {
-			const { throwOnError = false } = globalOptions;
-
-			/** @type {Deque} */
-			const deferQueue = new Deque();
+			/** @type {Deferred[]} */
+			const deferQueue = [];
 			let isExecuting = false;
 
 			/**
@@ -273,12 +327,13 @@ function withDefer(fn, options = {}) {
 					throw new TypeError("callback must be a function");
 				}
 
-				validateOptionsObject(localOptions, "Options");
+				validateOptionsShape(localOptions, "Options");
 
 				const mergedOptions = { ...globalOptions, ...localOptions };
 				validateDeferOptions(mergedOptions);
 
-				let resolvePromise;
+				/** @type {(arg0: unknown) => void} */
+				let resolvePromise = () => {};
 				const promise = new Promise((resolve) => {
 					resolvePromise = resolve;
 				});
@@ -292,9 +347,12 @@ function withDefer(fn, options = {}) {
 					resolve: resolvePromise,
 					errorReporter: mergedOptions.errorReporter ?? null,
 					debug: mergedOptions.debug ?? false,
+					throwOnError: mergedOptions.throwOnError ?? false,
 				};
 
-				deferQueue.prepend(deferred);
+				// Push (append) + LIFO iteration below, instead of a linked-list prepend,
+				// since a plain array already gives O(1) append and O(n) reverse iteration.
+				deferQueue.push(deferred);
 				return {
 					cancel: () => {
 						deferred.isCancelled = true;
@@ -306,72 +364,89 @@ function withDefer(fn, options = {}) {
 			/**
 			 * Runs the main function and the deferred functions
 			 * @param {function(): (unknown|Promise<unknown>)} fn - The main function to execute
-			 * @returns {Promise<unknown>} - The return value of the main function
+			 * @returns {Promise<unknown>} - The (possibly deferred-recovered/overridden) return value of the main function
 			 */
 			async function run(fn) {
-				let returnValue;
+				/** @type {RunOutcome} */
+				const runOutcome = { hasError: false, error: undefined, value: undefined };
 				try {
-					returnValue = await fn();
-				} finally {
-					await executeDeferredFunctions();
+					runOutcome.value = await fn();
+				} catch (err) {
+					runOutcome.hasError = true;
+					runOutcome.error = err;
 				}
-				return returnValue;
+
+				await executeDeferredFunctions(runOutcome);
+
+				if (runOutcome.hasError) {
+					throw runOutcome.error;
+				}
+				return runOutcome.value;
 			}
 
 			/**
 			 * Executes all deferred functions sequentially in LIFO order
-			 * @returns {Promise<unknown[]>}
+			 * @param {RunOutcome} runOutcome - The main function's outcome; deferreds may inspect/recover it via RunContext
+			 * @returns {Promise<void>}
 			 */
-			async function executeDeferredFunctions() {
+			async function executeDeferredFunctions(runOutcome) {
 				isExecuting = true;
-				const results = [];
+				// Materialize LIFO order once (O(n)) instead of re-deriving deferred
+				// metadata per error later, which previously made failure reporting O(n^2).
+				const lifoQueue = deferQueue.slice().reverse();
+				const outcomes = [];
 
-				let i = 0;
-				for (const deferred of deferQueue) {
-					results.push(await handleDeferred(deferred, i++, deferQueue));
+				for (let i = 0; i < lifoQueue.length; i++) {
+					outcomes.push(await handleDeferred(lifoQueue[i], i, runOutcome));
 				}
 
-				const errors = handleErrors(
-					results.map((result, index) => ({ result, index })),
-					deferQueue,
-				);
+				const errors = collectThrowableErrors(outcomes, lifoQueue);
 
 				// Clean up callback references to allow garbage collection
-				for (const deferred of deferQueue) {
+				for (const deferred of lifoQueue) {
 					deferred.callback = null;
 					deferred.resolve = null;
 					deferred.errorReporter = null;
 				}
 
-				if (throwOnError && errors.length > 0) {
+				if (errors.length > 0) {
 					throw new AggregateError(errors, `${errors.length} deferred functions failed`);
 				}
-
-				return results;
 			}
 
 			/**
-			 * Handles errors from all deferred functions
-			 * @param {{result: unknown, index: number}[]} resultWithIndex - Results with their indices
-			 * @param {Deque} deferQueue - The queue of deferred functions
+			 * Wraps failed outcomes whose own deferred opted into throwOnError
+			 * @param {DeferredOutcome[]} outcomes - Outcomes in the same order as lifoQueue
+			 * @param {Deferred[]} lifoQueue - Deferreds in LIFO (execution) order
 			 * @returns {Error[]}
 			 */
-			function handleErrors(resultWithIndex, deferQueue) {
-				return resultWithIndex
-					.filter(({ result }) => result instanceof Error)
-					.map(({ result: err, index }) => {
-						const message = createErrorMessage(deferQueue, index, "promise rejection");
-						if (err instanceof Error) {
-							const wrappedErr = new Error(`${message}: ${err.message}`);
-							wrappedErr.cause = err;
-							// Preserve original stack trace for debugging
-							if (err.stack) {
-								wrappedErr.stack = `${wrappedErr.stack}\nCaused by:\n${err.stack}`;
-							}
-							return wrappedErr;
+			function collectThrowableErrors(outcomes, lifoQueue) {
+				/** @type {Error[]} */
+				const errors = [];
+				for (let index = 0; index < outcomes.length; index++) {
+					const outcome = outcomes[index];
+					if (outcome.ok || !lifoQueue[index].throwOnError) {
+						continue;
+					}
+					const err = outcome.error;
+					const message = createErrorMessage(
+						lifoQueue[index].functionName,
+						index,
+						"promise rejection",
+					);
+					if (err instanceof Error) {
+						const wrappedErr = new Error(`${message}: ${err.message}`);
+						wrappedErr.cause = err;
+						// Preserve original stack trace for debugging
+						if (err.stack) {
+							wrappedErr.stack = `${wrappedErr.stack}\nCaused by:\n${err.stack}`;
 						}
-						return new Error(`${message}: ${String(err)}`);
-					});
+						errors.push(wrappedErr);
+					} else {
+						errors.push(new Error(`${message}: ${String(err)}`));
+					}
+				}
+				return errors;
 			}
 
 			return { defer, run };

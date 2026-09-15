@@ -7,6 +7,7 @@
 		"allowJs": true,
 		"declaration": true,
 		"emitDeclarationOnly": true,
+		"rootDir": "./src",
 		"outDir": "./src",
 		"skipLibCheck": true
 	},

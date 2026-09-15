@@ -59,7 +59,31 @@ withDefer(mainFunction)();
 3. **User-Friendly API:** The `defer()` in `with-defer.js` is similar to Go’s, making it easy to use for scheduling
    functions in JavaScript.
 
+4. **`recover()` + named-return mutation:** Just like Go's `recover()` inside a deferred function can stop a panic and
+   set the function's named return value, a deferred callback here can inspect the main function's pending
+   error/return value via a `RunContext` argument and call `ctx.recover(value)` to suppress the error and/or change
+   what `withDefer()` ultimately resolves with. See [Recovering from errors](#recovering-from-errors--named-return-mutation) below.
+
 Same vibe, right?
+
+#### A note on argument evaluation timing
+
+One place Go and `with-defer.js` genuinely differ: Go's `defer f(x)` evaluates `x` **immediately** at the `defer`
+line — only the call itself is delayed. A JS closure captures variables live, so `defer(() => f(x))` reads `x`'s
+value at _execution_ time, which matters if `x` changes afterward:
+
+```javascript
+let x = 1;
+defer(() => console.log(x)); // logs 2, not 1 - x is read when the deferred runs
+x = 2;
+```
+
+To snapshot a value the way Go does, capture it into its own binding at `defer()`-call time:
+
+```javascript
+const snapshotX = x;
+defer(() => console.log(snapshotX)); // logs 1, exactly like Go
+```
 
 ## Features
 
@@ -90,6 +114,9 @@ import { withDefer } from 'npm:@dacodedbeat/with-defer-js';
 ```bash
 bun add @dacodedbeat/with-defer-js
 ```
+
+Ships as both ESM and CommonJS — `import` gets the ESM source directly; `require()` gets a generated CJS build
+(`dist/cjs/with-defer.js`, produced by `npm run build`). Both expose the same API.
 
 ## Usage
 
@@ -185,6 +212,69 @@ await example();
 // 3. First registered
 ```
 
+### Recovering from Errors & Named-Return Mutation
+
+Every deferred callback optionally receives a `RunContext` argument reflecting the main function's pending outcome —
+mirroring Go's `recover()` (which can stop a panic) and named-return mutation (which can change what the function
+returns), both in one mechanism:
+
+```typescript
+type RunContext = {
+	hasError: boolean; // true if the main function threw/rejected and hasn't been recovered yet
+	error: unknown; // the pending error, meaningful only when hasError is true
+	value: unknown; // the pending return value, meaningful only when hasError is false
+	recover: (newValue: unknown) => void; // suppress the error (if any) and set the final return value
+};
+```
+
+**Recovering a thrown error** (like Go's `defer func() { if r := recover(); r != nil { ... } }()`):
+
+```javascript
+const example = withDefer(async (defer) => {
+	defer((ctx) => {
+		if (ctx.hasError) {
+			console.error("recovered from:", ctx.error);
+			ctx.recover("fallback value");
+		}
+	});
+
+	throw new Error("boom");
+});
+
+await example(); // resolves "fallback value" instead of rejecting
+```
+
+**Mutating the return value on success** (like Go's named-return mutation):
+
+```javascript
+const example = withDefer(async (defer) => {
+	defer((ctx) => {
+		ctx.recover(ctx.value + 1);
+	});
+
+	return 1;
+});
+
+await example(); // resolves 2
+```
+
+Deferreds run LIFO, so `ctx` always reflects whatever the most-recently-executed (i.e. earlier-registered) deferred
+already did — the last deferred to call `recover()` wins, matching Go's semantics where an outer deferred's
+`recover()`/return-mutation is the one that's actually observed by the caller. Callbacks that don't declare the `ctx`
+parameter are unaffected — this is fully backward compatible.
+
+> [!IMPORTANT]
+>
+> - **Call `recover()` synchronously within your callback, before it settles.** Once a deferred's own callback has
+>   settled — including a callback that lost its `timeout` race but keeps running in the background afterward — any
+>   later `recover()` call from it is a no-op. `recover()` is for the deferred that's currently running to decide the
+>   outcome, not for a stale, already-finished (or abandoned) one to reach back and change it.
+> - **A deferred's own failure and `recover()` are independent.** `recover()` only affects what `run()` itself
+>   resolves/rejects with. If that same deferred (or any other) also throws and has `throwOnError: true`, the
+>   resulting `AggregateError` is still thrown — a successful `recover()` does not suppress a separately-reported
+>   deferred failure. Without `throwOnError`, the deferred's own error is just reported via `errorReporter`/`debug` as
+>   usual, and the `recover()` call's effect on the final value still stands.
+
 ### Error Handling
 
 When errors occur in deferred functions:
@@ -206,6 +296,13 @@ try {
 }
 ```
 
+> [!IMPORTANT]
+> The `promise` returned by `defer()` **always resolves**, even when the deferred callback throws, times out, or is
+> cancelled — it never rejects. On failure it resolves with the raw error value (check with `instanceof Error`); on
+> cancellation it resolves with the string `"deferred function was cancelled"`. Use `throwOnError` and/or
+> `errorReporter` at the `withDefer()`/`defer()` level to be notified of failures — don't rely on `.catch()` on an
+> individual deferred's `promise`.
+
 ### Timeout Precision
 
 Timeouts are implemented with `setTimeout()`, which has platform-dependent precision:
@@ -215,6 +312,12 @@ Timeouts are implemented with `setTimeout()`, which has platform-dependent preci
 - **Electron:** ±5-15ms typical
 
 Timeouts are properly cleaned up after completion and never fire before the specified interval.
+
+> [!IMPORTANT]
+> A timeout only stops **waiting** for the callback — it does not abort or cancel the callback itself. If a timed-out
+> deferred callback is still running (e.g. an in-flight `await`), it keeps executing in the background after the
+> timeout is reported, and its eventual result/rejection is discarded. There is no `AbortSignal` passed into deferred
+> callbacks today; if your cleanup needs real cancellation, wire your own `AbortController` through the callback.
 
 ### Important Limitation: Fire-and-Forget Async Operations
 

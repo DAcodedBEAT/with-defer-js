@@ -22,16 +22,20 @@
 	"files": [
 		"src/with-defer.js",
 		"src/with-defer.d.ts",
+		"dist/cjs/with-defer.js",
+		"dist/cjs/package.json",
 		"package.json",
 		"README.md",
 		"LICENSE"
 	],
 	"type": "module",
-	"main": "src/with-defer.js",
+	"main": "dist/cjs/with-defer.js",
 	"exports": {
 		".": {
+			"types": "./src/with-defer.d.ts",
 			"import": "./src/with-defer.js",
-			"types": "./src/with-defer.d.ts"
+			"require": "./dist/cjs/with-defer.js",
+			"default": "./src/with-defer.js"
 		}
 	},
 	"scripts": {
@@ -45,12 +49,15 @@
 		"check": "npm run lint && npm run fmt",
 		"check:fix": "npm run lint:fix && npm run fmt:fix",
 		"typecheck": "tsc --noEmit",
-		"generate:types": "tsc",
-		"prepack": "npm run check && npm run typecheck && npm run test:run && npm run generate:types"
+		"generate:types": "tsc && oxfmt src/with-defer.d.ts",
+		"build:cjs": "tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > dist/cjs/package.json",
+		"build": "npm run generate:types && npm run build:cjs",
+		"prepack": "npm run check && npm run typecheck && npm run test:run && npm run build"
 	},
 	"devDependencies": {
 		"@semantic-release/changelog": "^6.0.3",
 		"@semantic-release/git": "^10.0.1",
+		"@vitest/coverage-v8": "^4.1.11",
 		"oxfmt": "*",
 		"oxlint": "*",
 		"semantic-release": "^25.0.9",
@@ -58,6 +65,6 @@
 		"vitest": "^4.1.11"
 	},
 	"engines": {
-		"node": ">=16.0.0"
+		"node": "^20.0.0 || ^22.0.0 || >=24.0.0"
 	}
 }

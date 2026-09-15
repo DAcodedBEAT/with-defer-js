@@ -1782,3 +1782,267 @@ describe("Missing Critical Tests", () => {
 		await example();
 	});
 });
+
+describe("Regression tests for adversarial review findings", () => {
+	it("should respect a local throwOnError:true override when global throwOnError is false", async () => {
+		const example = withDefer(async (defer) => {
+			defer(
+				() => {
+					throw new Error("boom");
+				},
+				{ throwOnError: true },
+			);
+		});
+
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
+	});
+
+	it("should respect a local throwOnError:false override when global throwOnError is true", async () => {
+		const example = withDefer(
+			async (defer) => {
+				defer(
+					() => {
+						throw new Error("boom");
+					},
+					{ throwOnError: false },
+				);
+			},
+			{ throwOnError: true },
+		);
+
+		await example(); // Should not throw
+	});
+
+	it("should reject unknown option keys passed to withDefer", () => {
+		expect(() => withDefer(() => {}, { timeOut: 5000 })).toThrow(
+			'Unknown Options property: "timeOut"',
+		);
+	});
+
+	it("should validate global option values at wrap time, even if defer() is never called", () => {
+		expect(() => withDefer(async () => "ok", { timeout: "not-a-number" })).toThrow(
+			"timeout must be a finite number or null",
+		);
+	});
+
+	it("should accept explicit null for withDefer/defer options (same as omitting them)", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(() => logs.push("cleanup"), null);
+		}, null);
+
+		await example();
+		expect(logs).toEqual(["cleanup"]);
+	});
+
+	it("should wrap a non-Error thrown value in the AggregateError when throwOnError is true", async () => {
+		const example = withDefer(async (defer) => {
+			defer(
+				() => {
+					throw "plain string failure";
+				},
+				{ throwOnError: true },
+			);
+		});
+
+		try {
+			await example();
+			expect.fail("should have thrown AggregateError");
+		} catch (err) {
+			expect(err).toBeInstanceOf(AggregateError);
+			expect(err.errors[0].message).toContain("plain string failure");
+			expect(err.errors[0].cause).toBeUndefined(); // only Error causes get .cause preserved
+		}
+	});
+
+	it("should reject unknown option keys passed to defer()", async () => {
+		const example = withDefer(async (defer) => {
+			expect(() => defer(() => {}, { errReporter: () => {} })).toThrow(
+				'Unknown Options property: "errReporter"',
+			);
+		});
+
+		await example();
+	});
+
+	it("should not treat a deferred function that returns (not throws) an Error as a failure", async () => {
+		const errorReporter = vi.fn();
+
+		const example = withDefer(
+			async (defer) => {
+				defer(() => new Error("just a status value"));
+			},
+			{ errorReporter, throwOnError: true },
+		);
+
+		await example(); // Should not throw and should not report an error
+		expect(errorReporter).not.toHaveBeenCalled();
+	});
+
+	it("should not crash when an async errorReporter rejects", async () => {
+		const example = withDefer(
+			async (defer) => {
+				defer(() => {
+					throw new Error("boom");
+				});
+			},
+			{
+				errorReporter: async () => {
+					throw new Error("reporter network error");
+				},
+			},
+		);
+
+		await example(); // Should settle normally, not produce an unhandled rejection
+	});
+
+	it("should scale roughly linearly when many deferreds fail (no O(n^2) blowup)", async () => {
+		const n = 4000;
+		const example = withDefer(async (defer) => {
+			for (let i = 0; i < n; i++) {
+				defer(() => {
+					throw new Error("fail");
+				});
+			}
+		});
+
+		const start = performance.now();
+		await example();
+		const duration = performance.now() - start;
+
+		expect(duration).toBeLessThan(500);
+	});
+});
+
+describe("Go-style recover() and named-return mutation", () => {
+	it("should let a deferred recover from the main function's thrown error", async () => {
+		const example = withDefer(async (defer) => {
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(true);
+				expect(ctx.error).toBeInstanceOf(Error);
+				expect(ctx.error.message).toBe("boom");
+				ctx.recover("recovered value");
+			});
+			throw new Error("boom");
+		});
+
+		await expect(example()).resolves.toBe("recovered value");
+	});
+
+	it("should propagate the main function's error when no deferred recovers it", async () => {
+		const example = withDefer(async (defer) => {
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(true); // observes, but doesn't recover
+			});
+			throw new Error("boom");
+		});
+
+		await expect(example()).rejects.toThrow("boom");
+	});
+
+	it("should let a deferred override the return value on the success path (no error)", async () => {
+		const example = withDefer(async (defer) => {
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(false);
+				expect(ctx.value).toBe(1);
+				ctx.recover(ctx.value + 1);
+			});
+			return 1;
+		});
+
+		await expect(example()).resolves.toBe(2);
+	});
+
+	it("should apply the last-to-run (earliest-registered) recover() call, LIFO", async () => {
+		const example = withDefer(async (defer) => {
+			// Registered first, runs LAST (LIFO) -> should win
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(false); // already recovered by the deferred below
+				ctx.recover("final value");
+			});
+			// Registered second, runs FIRST (LIFO)
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(true);
+				ctx.recover("intermediate value");
+			});
+			throw new Error("boom");
+		});
+
+		await expect(example()).resolves.toBe("final value");
+	});
+
+	it("should ignore the RunContext argument for callbacks that don't declare it (backward compatible)", async () => {
+		const logs = [];
+		const example = withDefer(async (defer) => {
+			defer(() => {
+				logs.push("plain callback ran");
+			});
+			return "unchanged";
+		});
+
+		await expect(example()).resolves.toBe("unchanged");
+		expect(logs).toEqual(["plain callback ran"]);
+	});
+
+	it("should ignore a recover() call from a callback that keeps running after losing its own timeout race", async () => {
+		const example = withDefer(async (defer) => {
+			// Runs LAST (LIFO) - observes whatever state remains after deferred #2 below.
+			defer((ctx) => {
+				expect(ctx.hasError).toBe(true);
+				expect(ctx.error.message).toBe("boom");
+			});
+			// Registered second, runs FIRST (LIFO): times out at 10ms, but its body keeps
+			// running past that and calls ctx.recover() ~40ms later, once it has already
+			// settled (as timed-out) from handleDeferred's point of view.
+			defer(
+				async (ctx) => {
+					await new Promise((resolve) => setTimeout(resolve, 40));
+					ctx.recover("stray value from a timed-out deferred");
+				},
+				{ timeout: 10 },
+			);
+			throw new Error("boom");
+		});
+
+		// Give the detached (timed-out) deferred's background recover() call a chance to
+		// fire before asserting - it must be a no-op by then.
+		await expect(example()).rejects.toThrow("boom");
+		await new Promise((resolve) => setTimeout(resolve, 60));
+	});
+
+	it("should let throwOnError still throw even after a deferred successfully recovered the main error", async () => {
+		// Documented precedence: a deferred's own failure (with throwOnError) is reported
+		// as an AggregateError regardless of whether recover() already ran - recover() only
+		// controls what run() itself would have returned, not whether OTHER deferreds failed.
+		const example = withDefer(
+			async (defer) => {
+				defer(
+					(ctx) => {
+						ctx.recover("recovered-value");
+						throw new Error("deferred boom");
+					},
+					{ throwOnError: true },
+				);
+				throw new Error("main boom");
+			},
+			{ errorReporter: () => {} },
+		);
+
+		await expect(example()).rejects.toThrow("1 deferred functions failed");
+	});
+
+	it("should keep a recover() call's effect when the same deferred throws afterward without throwOnError", async () => {
+		const example = withDefer(
+			async (defer) => {
+				defer((ctx) => {
+					ctx.recover("recovered-value");
+					throw new Error("deferred boom"); // reported via errorReporter, doesn't affect the recovery
+				});
+				throw new Error("main boom");
+			},
+			{ errorReporter: () => {} },
+		);
+
+		await expect(example()).resolves.toBe("recovered-value");
+	});
+});

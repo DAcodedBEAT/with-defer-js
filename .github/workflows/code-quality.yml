@@ -26,8 +26,5 @@ jobs:
       - name: Run TypeScript type check
         run: npm run typecheck
 
-      - name: Generate TypeScript declarations
-        run: npm run generate:types
-
       - name: Validate prepack
         run: npm run prepack

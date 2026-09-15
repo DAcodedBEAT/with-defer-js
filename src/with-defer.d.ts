@@ -2,7 +2,7 @@ export type ErrorContext = {
 	/**
 	 * - The error object
 	 */
-	err: Error;
+	err: unknown;
 	/**
 	 * - The index of the deferred function
 	 */
@@ -12,31 +12,51 @@ export type ErrorContext = {
 	 */
 	message: string;
 };
-export type ErrorReporter = (arg0: Error, arg1: ErrorContext) => void;
+export type ErrorReporter = (arg0: unknown, arg1: ErrorContext) => void;
 export type DeferOptions = {
 	/**
 	 * - Timeout for deferred functions
 	 */
-	timeout?: number | null;
+	timeout?: number | null | undefined;
 	/**
 	 * - Enable debug logging
 	 */
-	debug?: boolean;
+	debug?: boolean | undefined;
 	/**
 	 * - Throw error if any deferred function fails
 	 */
-	throwOnError?: boolean;
+	throwOnError?: boolean | undefined;
 	/**
 	 * - Function to report errors
 	 */
-	errorReporter?: ErrorReporter | null;
+	errorReporter?: ErrorReporter | null | undefined;
 };
-export type CallbackFunction = () => unknown | Promise<unknown>;
+export type RunContext = {
+	/**
+	 * - Whether the main function is currently pending with an error (false once recovered)
+	 */
+	hasError: boolean;
+	/**
+	 * - The main function's pending error, meaningful only when hasError is true
+	 */
+	error: unknown;
+	/**
+	 * - The main function's pending return value, meaningful only when hasError is false
+	 */
+	value: unknown;
+	/**
+	 * - Suppresses the pending error (if any) and sets the final return value,
+	 * mirroring Go's `recover()` + named-return mutation. Reflects the current state right before each deferred runs, so
+	 * a later (earlier-registered) deferred sees whatever an earlier (later-registered) one already recovered/set.
+	 */
+	recover: (arg0: unknown) => void;
+};
+export type CallbackFunction = (arg0: RunContext | undefined) => unknown | Promise<unknown>;
 export type Deferred = {
 	/**
-	 * - The deferred callback function
+	 * - The deferred callback function (nulled out after execution for GC)
 	 */
-	callback: CallbackFunction;
+	callback: CallbackFunction | null;
 	/**
 	 * - Timeout for the deferred function
 	 */
@@ -50,9 +70,9 @@ export type Deferred = {
 	 */
 	isCancelled: boolean;
 	/**
-	 * - Function to resolve the deferred promise
+	 * - Function to resolve the deferred promise (nulled out after execution for GC)
 	 */
-	resolve: (arg0: unknown) => void;
+	resolve: ((arg0: unknown) => void) | null;
 	/**
 	 * - Per-deferred error reporter function
 	 */
@@ -61,6 +81,10 @@ export type Deferred = {
 	 * - Whether debug logging is enabled for this deferred
 	 */
 	debug: boolean;
+	/**
+	 * - Whether a failure of this deferred should be included in the thrown AggregateError
+	 */
+	throwOnError: boolean;
 };
 export type DeferredResult = {
 	/**
@@ -73,26 +97,30 @@ export type DeferredResult = {
 	promise: Promise<unknown>;
 };
 export type DeferFunction = (
-	arg0: CallbackFunction,
-	arg1: DeferOptions | undefined,
+	callback: CallbackFunction,
+	localOptions?: DeferOptions,
 ) => DeferredResult;
-export type DeferContext = {
-	/**
-	 * - Function to defer execution
-	 */
-	defer: DeferFunction;
-	/**
-	 * - Function to run the main function and deferred functions
-	 */
-	run: (arg0: () => unknown | Promise<unknown>) => Promise<unknown>;
+export type DeferredOutcome =
+	| {
+			ok: true;
+			value: unknown;
+	  }
+	| {
+			ok: false;
+			error: unknown;
+	  };
+export type RunOutcome = {
+	hasError: boolean;
+	error: unknown;
+	value: unknown;
 };
 /**
  * Creates a wrapper function that allows for deferred execution with error handling
- * @param {function(DeferFunction, ...unknown[]): (unknown|Promise<unknown>)} fn - The main function to execute
+ * @param {(defer: DeferFunction, ...args: unknown[]) => (unknown|Promise<unknown>)} fn - The main function to execute
  * @param {DeferOptions} [options={}] - Global options for deferred functions
- * @returns {function(...unknown[]): Promise<unknown>} - A function that runs the provided function with deferred execution and returns the main function's return value
+ * @returns {(...args: unknown[]) => Promise<unknown>} - A function that runs the provided function with deferred execution and returns the main function's return value
  */
 export function withDefer(
-	fn: (arg0: DeferFunction, ...args: unknown[][]) => unknown | Promise<unknown>,
+	fn: (defer: DeferFunction, ...args: unknown[]) => unknown | Promise<unknown>,
 	options?: DeferOptions,
-): (...args: unknown[][]) => Promise<unknown>;
+): (...args: unknown[]) => Promise<unknown>;
